@@ -13,21 +13,24 @@ void setup() {
   clock_prescale_set(clock_div_1);
 #endif
 
-  Serial.begin(9600); 
+  Serial.begin(115200); 
 
   pixels.begin();
   pixels.clear();
 }
 
 void loop() {
-  Serial.println(colour);
   if (Serial.available() > 0)
   {
-    colour = Serial.parseInt();
+    String input = Serial.readStringUntil('\n'); 
+    int colour = input.toInt();
+
+    uint16_t hue = map(colour, 0, 255, 0, 65535); // Color shift
+     uint8_t brightness = map(colour, 0, 255, 0, 255);
 
     //Serial.println(255);
     for (int i = 0; i <= NUMPIXELS; i++) {
-      pixels.setPixelColor(i, colour, colour, 0);
+      pixels.setPixelColor(i, pixels.ColorHSV(hue, 255, brightness));
     }
     pixels.show();
   }

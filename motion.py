@@ -3,7 +3,7 @@ import numpy as np
 import time
 import serial
 
-arduino = serial.Serial(port='COM16', baudrate=9600, timeout=1)
+arduino = serial.Serial(port='COM16', baudrate=115200, timeout=0)
 time.sleep(2)
 # Initialize the video capture object
 cap = cv2.VideoCapture(1)  # Use '0' for the default camera, or replace with a video file path
