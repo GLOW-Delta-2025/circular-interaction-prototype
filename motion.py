@@ -1,6 +1,10 @@
 import cv2
 import numpy as np
+import time
+import serial
 
+arduino = serial.Serial('/dev/tty.usbmodem11101', 9600, timeout=1)
+time.sleep(2)
 # Initialize the video capture object
 cap = cv2.VideoCapture(0)  # Use '0' for the default camera, or replace with a video file path
 
@@ -8,6 +12,10 @@ cap = cv2.VideoCapture(0)  # Use '0' for the default camera, or replace with a v
 ret, frame1 = cap.read()
 prev_gray = cv2.cvtColor(frame1, cv2.COLOR_BGR2GRAY)
 prev_gray = cv2.GaussianBlur(prev_gray, (21, 21), 0)
+
+motion_counter = 0  # Counter to track the motion duration
+max_duration = 10  # Seconds for max motion duration
+motion_start_time = None
 
 while cap.isOpened():
     ret, frame2 = cap.read()
@@ -29,14 +37,31 @@ while cap.isOpened():
     # Find contours of the moving objects
     contours, _ = cv2.findContours(thresh, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
 
-    # Draw bounding boxes around moving objects
+    # Check if any significant motion was detected
+    motion_detected = False
     for contour in contours:
         if cv2.contourArea(contour) < 500:
             continue  # Ignore small contours (noise)
-
+        motion_detected = True
         (x, y, w, h) = cv2.boundingRect(contour)
         cv2.rectangle(frame2, (x, y), (x + w, y + h), (0, 255, 0), 2)
 
+    # If motion is detected, update motion counter
+    if motion_detected:
+        if motion_start_time is None:  # Start timing when motion is first detected
+            motion_start_time = time.time()
+        motion_duration = time.time() - motion_start_time
+        motion_counter = min(255, int((motion_duration / max_duration) * 255))
+    else:
+        # No motion detected, decrease the motion counter gradually
+        motion_counter = max(0, motion_counter - 5)  # Decrease by a small value, tweak as needed
+        motion_start_time = None  # Reset the motion start time
+
+    # Display the motion intensity value (0-255)
+    cv2.putText(frame2, f"Motion Intensity: {motion_counter}", (10, 30), cv2.FONT_HERSHEY_SIMPLEX, 1, (0, 0, 255), 2)
+    print(motion_counter)
+
+    arduino.write(str(motion_counter).encode())
     # Show the processed frame
     cv2.imshow('Motion Detection', frame2)
 
