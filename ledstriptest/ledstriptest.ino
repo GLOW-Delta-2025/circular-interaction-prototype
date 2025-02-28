@@ -5,7 +5,7 @@
 
 #define PIN        6
 #define NUMPIXELS  65
-
+int colour = 0;
 Adafruit_NeoPixel pixels(NUMPIXELS, PIN, NEO_GRB + NEO_KHZ800);
 
 void setup() {
@@ -13,18 +13,22 @@ void setup() {
   clock_prescale_set(clock_div_1);
 #endif
 
-  Serial.begin(115200); 
+  Serial.begin(9600); 
 
   pixels.begin();
   pixels.clear();
 }
 
 void loop() {
-	int colour = Serial.read();
+  Serial.println(colour);
+  if (Serial.available() > 0)
+  {
+    colour = Serial.parseInt();
 
-  Serial.println(255);
-  for (int i = 0; i <= NUMPIXELS; i++) {
-    pixels.setPixelColor(i, colour, colour, 0);
+    //Serial.println(255);
+    for (int i = 0; i <= NUMPIXELS; i++) {
+      pixels.setPixelColor(i, colour, colour, 0);
+    }
+    pixels.show();
   }
-  pixels.show();
 }

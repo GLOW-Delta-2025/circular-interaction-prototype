@@ -3,10 +3,10 @@ import numpy as np
 import time
 import serial
 
-arduino = serial.Serial('/dev/tty.usbmodem11101', 9600, timeout=1)
+arduino = serial.Serial(port='COM16', baudrate=9600, timeout=1)
 time.sleep(2)
 # Initialize the video capture object
-cap = cv2.VideoCapture(0)  # Use '0' for the default camera, or replace with a video file path
+cap = cv2.VideoCapture(1)  # Use '0' for the default camera, or replace with a video file path
 
 # Initialize variables for motion detection
 ret, frame1 = cap.read()
@@ -61,16 +61,16 @@ while cap.isOpened():
     cv2.putText(frame2, f"Motion Intensity: {motion_counter}", (10, 30), cv2.FONT_HERSHEY_SIMPLEX, 1, (0, 0, 255), 2)
     print(motion_counter)
 
-    arduino.write(str(motion_counter).encode())
+    arduino.write((str(motion_counter) + '\n').encode())
     # Show the processed frame
-    cv2.imshow('Motion Detection', frame2)
+    # cv2.imshow('Motion Detection', frame2)
 
     # Update the previous frame for the next loop
     prev_gray = gray
 
     # Break loop if 'q' is pressed
-    if cv2.waitKey(1) & 0xFF == ord('q'):
-        break
+    # if cv2.waitKey(1) & 0xFF == ord('q'):
+    #     break
 
 # Release the video capture object and close all windows
 cap.release()
