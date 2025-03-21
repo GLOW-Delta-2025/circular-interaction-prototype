@@ -26,29 +26,44 @@ const int LEDModes::colorCycle[][3] = {
 const int LEDModes::numColors = sizeof(LEDModes::colorCycle) / sizeof(LEDModes::colorCycle[0]);
 
 LEDModes::LEDModes(int pin, int numLEDs) 
-    : strip(numLEDs, pin, NEO_GRB + NEO_KHZ800), 
+    : NUM_LEDS(numLEDs),
       currentIndex(0), 
       currentHighlight_1(0), 
       currentHighlight_2(numLEDs/2), 
       colorDelayTime(100),
       highlightDelayTime(100),
+      targetColorDelay(100),
+      targetHighlightDelay(100),
       lastColorUpdate(0),
-      lastHighlightUpdate(0) {}
+      lastHighlightUpdate(0),
+      transitionStartTime(0),
+      startColorDelay(0),
+      startHighlightDelay(0),
+      warningStartTime(0),
+      lastInputTime(0),
+      warningPos(0),
+      isInWarningState(false) {
+    leds = new CRGB[numLEDs];
+    FastLED.addLeds<WS2812B, 3, GRB>(leds, numLEDs);  // Assuming WS2812B LEDs on pin 3
+}
 
 void LEDModes::begin() {
-    strip.begin();
-    strip.show();
+    FastLED.setBrightness(255);
+    FastLED.show();
 }
 
 void LEDModes::setDelay(String ppl_L_R) {
+    // Check if enough time has passed since last input
+    if (millis() - lastInputTime < WARNING_DURATION) {
+        return;  // Ignore input during cooldown
+    }
+
     int colonIndex = ppl_L_R.indexOf(':');  
 
     if (colonIndex != -1) {
-        // Validate string format
         String leftStr = ppl_L_R.substring(0, colonIndex);
         String rightStr = ppl_L_R.substring(colonIndex + 1);
         
-        // Check if both parts are valid numbers
         if (leftStr.length() > 0 && rightStr.length() > 0 && 
             isDigit(leftStr[0]) && isDigit(rightStr[0])) {
             
@@ -57,57 +72,114 @@ void LEDModes::setDelay(String ppl_L_R) {
             
             ppl_T = ppl_L + ppl_R;
             ppl_D = ppl_L - ppl_R;
+
+            if (ppl_T > 5) {
+                // Start warning animation
+                warningStartTime = millis();
+                lastInputTime = millis();
+                isInWarningState = true;
+                warningPos = 0;
+                return;
+            }
             
-            colorDelayTime = 100 - (ppl_T * 10);
-            highlightDelayTime = 100 - (abs(ppl_D) * 10);
+            isInWarningState = false;
             
-            if (colorDelayTime < 5) colorDelayTime = 5;
-            if (highlightDelayTime < 5) highlightDelayTime = 5;            
+            // Store current delays as starting points
+            startColorDelay = colorDelayTime;
+            startHighlightDelay = highlightDelayTime;
+            
+            // Calculate target delays using exponential curve
+            // Using sqrt and normalizing to 5 people instead of 10
+            float totalFactor = sqrt(ppl_T) / sqrt(5.0);  // normalized to 5 people
+            float diffFactor = sqrt(abs(ppl_D)) / sqrt(5.0);
+            
+            // Adjust range to go from 100ms to 10ms with 5 people
+            targetColorDelay = 100 - (90 * totalFactor);  // 90 = difference between 100 and 10
+            targetHighlightDelay = 100 - (90 * diffFactor);
+            
+            // Ensure minimum delay of 5ms
+            if (targetColorDelay < 5) targetColorDelay = 5;
+            if (targetHighlightDelay < 5) targetHighlightDelay = 5;
+            
+            // Start the transition
+            transitionStartTime = millis();
         }
         return;
     }
-/*-------------------------------------- GREEN ERROR FEEDBACK ------------------------------------------------------------ */
-/**/    for (int i = 0; i < strip.numPixels(); i++) {                                                                    /**/
-/**/        strip.setPixelColor(i, strip.Color(0, 128, 0));                                                              /**/
-/**/    }                                                                                                                /**/   
-/**/    strip.show();                                                                                                    /**/ 
-/**/    delay(500);                                                                                                      /**/               
-/*-------------------------------------------------------------------------------------------------------------------------*/
 }
 
 void LEDModes::updateIntensity() {  
+    if (isInWarningState || ppl_T > 5) {
+        static unsigned long lastUpdate = 0;
+        static const int UPDATE_INTERVAL = 10; // 10ms between updates
+        
+        if (millis() - lastUpdate >= UPDATE_INTERVAL) {
+            // Update each LED with a random color from the colorCycle array
+            for (int i = 0; i < NUM_LEDS; i++) {
+                // Pick a random color from the colorCycle array
+                int randomColorIndex = random(0, numColors);
+                leds[i] = CRGB(
+                    colorCycle[randomColorIndex][0],
+                    colorCycle[randomColorIndex][1],
+                    colorCycle[randomColorIndex][2]
+                );
+            }
+            
+            FastLED.show();
+            lastUpdate = millis();
+        }
+
+        // Check if warning duration is over (only for initial warning)
+        if (isInWarningState && millis() - warningStartTime >= WARNING_DURATION) {
+            isInWarningState = false;
+        }
+        return;
+    }
+
+    // Update delays smoothly if in transition
+    if (millis() - transitionStartTime < TRANSITION_DURATION) {
+        float progress = (float)(millis() - transitionStartTime) / TRANSITION_DURATION;
+        progress = min(1.0f, progress); // Ensure we don't exceed 1.0
+        
+        // Smoother easing function (cubic ease-in-out)
+        progress = progress < 0.5
+            ? 4 * progress * progress * progress
+            : 1 - pow(-2 * progress + 2, 3) / 2;
+        
+        // Interpolate between start and target delays
+        colorDelayTime = startColorDelay + (targetColorDelay - startColorDelay) * progress;
+        highlightDelayTime = startHighlightDelay + (targetHighlightDelay - startHighlightDelay) * progress;
+    }
+
     bool shouldUpdateColor = (millis() - lastColorUpdate >= colorDelayTime);
     bool shouldUpdateHighlight = (millis() - lastHighlightUpdate >= highlightDelayTime);
     
     if (!shouldUpdateColor && !shouldUpdateHighlight) return;
 
-    if (ppl_T > 10) {
-        for (int i = 0; i < strip.numPixels(); i++) {
-            strip.setPixelColor(i, strip.Color(255, 0, 0));
-        }
-        strip.show();
+    if (ppl_T > 5) {
+        fill_solid(leds, NUM_LEDS, CRGB(255, 0, 0));
+        FastLED.show();
         return;
     }
 
-    // Update colors and highlights
-    for (int i = 0; i < strip.numPixels(); i++) {
-        float intensity = 0.2;
-        for (int highlight : {currentHighlight_1, currentHighlight_2}) {
-            int distance = abs(i - highlight);
-            if (distance <= 4) { 
-                intensity = 1.0 - (0.8 * (distance / 4.0));
-                break;
-            }
+    // First turn all LEDs off
+    fill_solid(leds, NUM_LEDS, CRGB(0, 0, 0));
+
+    // Only update LEDs near the highlights
+    for (int highlight : {currentHighlight_1, currentHighlight_2}) {
+        for (int offset = -4; offset <= 4; offset++) {
+            int i = (highlight + offset + NUM_LEDS) % NUM_LEDS;  // Ensure positive wraparound
+            float intensity = 1.0 - (0.8 * (abs(offset) / 4.0));
+
+            leds[i] = CRGB(
+                colorCycle[currentIndex][0] * intensity,
+                colorCycle[currentIndex][1] * intensity,
+                colorCycle[currentIndex][2] * intensity
+            );
         }
-
-        int r = colorCycle[currentIndex][0] * intensity;
-        int g = colorCycle[currentIndex][1] * intensity;
-        int b = colorCycle[currentIndex][2] * intensity;
-
-        strip.setPixelColor(i, strip.Color(r, g, b));
     }
 
-    strip.show();
+    FastLED.show();
 
     if (shouldUpdateColor) {
         currentIndex = (currentIndex + 1) % numColors;
@@ -115,19 +187,48 @@ void LEDModes::updateIntensity() {
     }
 
     if (shouldUpdateHighlight) {
-        // Only move highlights if ppl_D is not 0
         if (ppl_D > 0) {
-            // Move right
-            currentHighlight_1 = (currentHighlight_1 + 1) % strip.numPixels();
-            currentHighlight_2 = (currentHighlight_2 + 1) % strip.numPixels();
+            currentHighlight_1 = (currentHighlight_1 + 1) % NUM_LEDS;
+            currentHighlight_2 = (currentHighlight_2 + 1) % NUM_LEDS;
         } else if (ppl_D < 0) {
-            // Move left
-            currentHighlight_1 = (currentHighlight_1 - 1 + strip.numPixels()) % strip.numPixels();
-            currentHighlight_2 = (currentHighlight_2 - 1 + strip.numPixels()) % strip.numPixels();
+            currentHighlight_1 = (currentHighlight_1 - 1 + NUM_LEDS) % NUM_LEDS;
+            currentHighlight_2 = (currentHighlight_2 - 1 + NUM_LEDS) % NUM_LEDS;
         }
-        // When ppl_D == 0, highlights stay in place
         lastHighlightUpdate = millis();
     }
+}
+
+void LEDModes::updatePulse() {
+    bool shouldUpdateHighlight = (millis() - lastHighlightUpdate >= highlightDelayTime);
+    
+    if (!shouldUpdateHighlight) return;
+
+    for (int i = 0; i < NUM_LEDS; i++) {
+        float intensity = 0.2;
+
+        if (currentHighlight_1 - 4 <= i && i < currentHighlight_1 + 4 || 
+            currentHighlight_2 - 4 <= i && i < currentHighlight_2 + 4) {
+            intensity = 1.0 - (0.8 * (abs(i - currentHighlight_1) / 4.0));
+        }
+
+        leds[i] = CRGB(
+            colorCycle[0][0] * intensity,
+            colorCycle[0][1] * intensity,
+            colorCycle[0][2] * intensity
+        );
+    }
+
+    FastLED.show();
+
+    if (ppl_D > 0) {
+        currentHighlight_1 = (currentHighlight_1 + 1) % NUM_LEDS;
+        currentHighlight_2 = (currentHighlight_2 + 1) % NUM_LEDS;
+    } else if (ppl_D < 0) {
+        currentHighlight_1 = (currentHighlight_1 - 1 + NUM_LEDS) % NUM_LEDS;
+        currentHighlight_2 = (currentHighlight_2 - 1 + NUM_LEDS) % NUM_LEDS;
+    }
+
+    lastHighlightUpdate = millis();
 }
 
 int LEDModes::getColorDelay() {
